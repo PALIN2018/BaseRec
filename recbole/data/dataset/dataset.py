@@ -1726,9 +1726,33 @@ class Dataset(torch.utils.data.Dataset):
 
         self._drop_unused_col()
         next_df = [self.inter_feat[index] for index in next_index]
+        # zpl
+        valid_pop, valid_unpop = self.split_by_popularity(next_index[1],next_index[0], threshold=self.config['pop_threshold'])
+        next_df_ = [self.inter_feat[valid_pop], self.inter_feat[valid_unpop]]
+        next_df = next_df + next_df_
+        # todo
+        # valid_repeat, valid_nonrepeat = self.split_by_repeat(next_index[1])
         next_ds = [self.copy(_) for _ in next_df]
         return next_ds
-
+    def split_by_popularity(self, target, source, threshold):
+        popular = []
+        unpopular = []
+        counts = Counter(self.inter_feat[source]['item_id'].numpy())
+        for item in target:
+            if counts.get(self.inter_feat[item]['item_id'].item(), 0) >= threshold:
+                popular.append(item)
+            else:
+                unpopular.append(item)
+        return popular, unpopular
+    def split_by_repeat(self, target):
+        repeat = []
+        nonrepeat = []
+        for item in target:
+            if self.inter_feat[item]['item_id'].item() in self.inter_feat[item]['item_id_list'].tolist():
+                repeat.append(item)
+            else:
+                nonrepeat.append(item)
+        return repeat, nonrepeat
     def shuffle(self):
         """Shuffle the interaction records inplace."""
         self.inter_feat.shuffle()

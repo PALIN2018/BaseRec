@@ -165,9 +165,9 @@ def data_preparation(config, dataset):
         model_type = config["MODEL_TYPE"]
         built_datasets = dataset.build()
 
-        train_dataset, valid_dataset, test_dataset = built_datasets
+        train_dataset, valid_dataset, test_dataset, valid_pop_dataset, valid_unpop_dataset = built_datasets
         train_sampler, valid_sampler, test_sampler = create_samplers(
-            config, dataset, built_datasets
+            config, dataset, built_datasets[:3]
         )
 
         if model_type != ModelType.KNOWLEDGE:
@@ -186,6 +186,12 @@ def data_preparation(config, dataset):
 
         valid_data = get_dataloader(config, "valid")(
             config, valid_dataset, valid_sampler, shuffle=False
+        )
+        valid_pop_data = get_dataloader(config, "valid")(
+            config, valid_pop_dataset, valid_sampler, shuffle=False
+        )
+        valid_unpop_data = get_dataloader(config, "valid")(
+            config, valid_unpop_dataset, valid_sampler, shuffle=False
         )
         test_data = get_dataloader(config, "test")(
             config, test_dataset, test_sampler, shuffle=False
@@ -214,7 +220,7 @@ def data_preparation(config, dataset):
         + ": "
         + set_color(f'[{config["eval_args"]}]', "yellow")
     )
-    return train_data, valid_data, test_data
+    return train_data, valid_data, test_data, valid_pop_data, valid_unpop_data
 
 
 def get_dataloader(config, phase: Literal["train", "valid", "test", "evaluation"]):

@@ -35,7 +35,7 @@ class WandbLogger(object):
 
             # Initialize a W&B run
             if self._wandb.run is None:
-                self._wandb.init(project=self.config.wandb_project, config=self.config)
+                self._wandb.init(project=self.config.wandb_project, name=self.config.run_name,config=self.config)
 
             self._set_steps()
 
@@ -56,6 +56,7 @@ class WandbLogger(object):
     def _set_steps(self):
         self._wandb.define_metric("train/*", step_metric="train_step")
         self._wandb.define_metric("valid/*", step_metric="valid_step")
+        self._wandb.define_metric("test/*", step_metric="test_step")
 
     def _add_head_to_metrics(self, metrics, head):
         head_metrics = dict()

@@ -794,7 +794,60 @@ class LightTransformerLayer(nn.Module):
         attention_output = self.multi_head_attention(hidden_states, pos_emb)
         feedforward_output = self.feed_forward(attention_output)
         return feedforward_output
+class TransformerUniformEncoder(nn.Module):
+    r""" One TransformerEncoder consists of several TransformerLayers.
 
+        - n_layers(num): num of transformer layers in transformer encoder. Default: 2
+        - n_heads(num): num of attention heads for multi-head attention layer. Default: 2
+        - hidden_size(num): the input and output hidden size. Default: 64
+        - inner_size(num): the dimensionality in feed-forward layer. Default: 256
+        - hidden_dropout_prob(float): probability of an element to be zeroed. Default: 0.5
+        - attn_dropout_prob(float): probability of an attention score to be zeroed. Default: 0.5
+        - hidden_act(str): activation function in feed-forward layer. Default: 'gelu'
+                      candidates: 'gelu', 'relu', 'swish', 'tanh', 'sigmoid'
+        - layer_norm_eps(float): a value added to the denominator for numerical stability. Default: 1e-12
+
+    """
+
+    def __init__(
+        self,
+        n_layers=2,
+        n_heads=2,
+        hidden_size=64,
+        inner_size=256,
+        hidden_dropout_prob=0.5,
+        attn_dropout_prob=0.5,
+        hidden_act='gelu',
+        layer_norm_eps=1e-12,
+        attention_constrain='vanilla'
+    ):
+
+        super(TransformerUniformEncoder, self).__init__()
+        layer = TransformerUniformLayer(
+            n_heads, hidden_size, inner_size, hidden_dropout_prob, attn_dropout_prob, hidden_act, layer_norm_eps, attention_constrain
+        )
+        self.layer = nn.ModuleList([copy.deepcopy(layer) for _ in range(n_layers)])
+
+    def forward(self, hidden_states, attention_mask, output_all_encoded_layers=True):
+        """
+        Args:
+            hidden_states (torch.Tensor): the input of the TransformerEncoder
+            attention_mask (torch.Tensor): the attention mask for the input hidden_states
+            output_all_encoded_layers (Bool): whether output all transformer layers' output
+
+        Returns:
+            all_encoder_layers (list): if output_all_encoded_layers is True, return a list consists of all transformer
+            layers' output, otherwise return a list only consists of the output of last transformer layer.
+
+        """
+        all_encoder_layers = []
+        for layer_module in self.layer:
+            hidden_states = layer_module(hidden_states, attention_mask)
+            if output_all_encoded_layers:
+                all_encoder_layers.append(hidden_states)
+        if not output_all_encoded_layers:
+            all_encoder_layers.append(hidden_states)
+        return all_encoder_layers
 
 class LightTransformerEncoder(nn.Module):
     r"""One LightTransformerEncoder consists of several LightTransformerLayers.
@@ -857,8 +910,143 @@ class LightTransformerEncoder(nn.Module):
         if not output_all_encoded_layers:
             all_encoder_layers.append(hidden_states)
         return all_encoder_layers
+class TransformerUniformLayer(nn.Module):
+    """
+    One transformer layer consists of a multi-head self-attention layer and a point-wise feed-forward layer.
+
+    Args:
+        hidden_states (torch.Tensor): the input of the multi-head self-attention sublayer
+        attention_mask (torch.Tensor): the attention mask for the multi-head self-attention sublayer
+
+    Returns:
+        feedforward_output (torch.Tensor): The output of the point-wise feed-forward sublayer,
+                                           is the output of the transformer layer.
+
+    """
+
+    def __init__(
+        self, n_heads, hidden_size, intermediate_size, hidden_dropout_prob, attn_dropout_prob, hidden_act,
+        layer_norm_eps, attention_constrain
+    ):
+        super(TransformerUniformLayer, self).__init__()
+        self.multi_head_attention = MultiHeadAttentionUniform(
+            n_heads, hidden_size, hidden_dropout_prob, attn_dropout_prob, layer_norm_eps, attention_constrain
+        )
+        self.feed_forward = FeedForward(hidden_size, intermediate_size, hidden_dropout_prob, hidden_act, layer_norm_eps)
+
+    def forward(self, hidden_states, attention_mask):
+        attention_output = self.multi_head_attention(hidden_states, attention_mask)
+        feedforward_output = self.feed_forward(attention_output)
+        return feedforward_output
+
+class MultiHeadAttentionUniform(nn.Module):
+    """
+    Multi-head Self-attention layers, a attention score dropout layer is introduced.
+
+    Args:
+        input_tensor (torch.Tensor): the input of the multi-head self-attention layer
+        attention_mask (torch.Tensor): the attention mask for input tensor
+
+    Returns:
+        hidden_states (torch.Tensor): the output of the multi-head self-attention layer
+
+    """
+
+    def __init__(self, n_heads, hidden_size, hidden_dropout_prob, attn_dropout_prob, layer_norm_eps, attention_constrain):
+        super(MultiHeadAttentionUniform, self).__init__()
+        if hidden_size % n_heads != 0:
+            raise ValueError(
+                "The hidden size (%d) is not a multiple of the number of attention "
+                "heads (%d)" % (hidden_size, n_heads)
+            )
+
+        self.num_attention_heads = n_heads
+        self.attention_head_size = int(hidden_size / n_heads)
+        self.all_head_size = self.num_attention_heads * self.attention_head_size
+
+        self.query = nn.Linear(hidden_size, self.all_head_size)
+        self.key = nn.Linear(hidden_size, self.all_head_size)
+        self.value = nn.Linear(hidden_size, self.all_head_size)
 
 
+        self.attn_dropout = nn.Dropout(attn_dropout_prob)
+
+        self.dense = nn.Linear(hidden_size, hidden_size)
+        self.LayerNorm = nn.LayerNorm(hidden_size, eps=layer_norm_eps)
+        self.out_dropout = nn.Dropout(hidden_dropout_prob)
+
+        self.attention_constrain = attention_constrain
+        self.mask_tag = True
+
+    def transpose_for_scores(self, x):
+        new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
+        x = x.view(*new_x_shape)
+        return x.permute(0, 2, 1, 3)
+
+    def forward(self, input_tensor, attention_mask):
+        if not self.mask_tag:
+            attention_mask.zero_()
+        if self.attention_constrain in ['uniform','value']:
+            mixed_value_layer = self.value(input_tensor)
+        else:
+            mixed_query_layer = self.query(input_tensor)
+            mixed_key_layer = self.key(input_tensor)
+            query_layer = self.transpose_for_scores(mixed_query_layer)
+            key_layer = self.transpose_for_scores(mixed_key_layer)
+            mixed_value_layer = self.value(input_tensor)
+
+        value_layer = self.transpose_for_scores(mixed_value_layer)
+
+        if self.attention_constrain == 'vanilla':
+            # Take the dot product between "query" and "key" to get the raw attention scores.
+            attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
+            attention_scores = attention_scores / math.sqrt(self.attention_head_size)
+            attention_scores = attention_scores + attention_mask
+        elif self.attention_constrain == 'value':
+            # Take the dot product between "value" and "value" to get the raw attention scores.
+            attention_scores_ = torch.matmul(value_layer, value_layer.transpose(-1, -2))
+            attention_scores = attention_scores_ / math.sqrt(self.attention_head_size)
+            attention_scores = attention_scores + attention_mask
+        elif self.attention_constrain == 'uniform':
+            # make the attention score uniform distributed
+            ones_tensor = torch.ones_like(attention_mask, dtype=torch.float, device=attention_mask.device)
+            attention_scores = ones_tensor + attention_mask
+        else:
+            # Take the dot product between "query" and "key" to get the raw attention scores.
+            attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
+            attention_scores = attention_scores / math.sqrt(self.attention_head_size)
+            attention_scores = attention_scores + attention_mask
+
+        if self.attention_constrain == 'drop_max' and self.training == True:
+            max_a, ids = torch.max(attention_scores, 3, keepdim=True)
+            max_mask = torch.zeros_like(attention_scores)
+            max_mask.scatter_(3, ids, -10000 * torch.ones_like(max_a))
+            attention_scores = attention_scores + max_mask.to(attention_scores.device)
+            # Normalize the attention scores to probabilities.
+            attention_probs = nn.Softmax(dim=-1)(attention_scores)
+        elif self.attention_constrain == 'drop_max_random' and self.training == True:
+            max_a, ids = torch.max(attention_scores, 3, keepdim=True)
+            max_mask = torch.zeros_like(attention_scores)
+            max_mask.scatter_(3, ids, -10000 * torch.ones_like(max_a))
+            attention_scores = attention_scores + max_mask.to(attention_scores.device)
+            # Normalize the attention scores to probabilities.
+            attention_probs = nn.Softmax(dim=-1)(attention_scores)
+            attention_probs = self.attn_dropout(attention_probs)
+        else:
+            # Normalize the attention scores to probabilities.
+            attention_probs = nn.Softmax(dim=-1)(attention_scores)
+            attention_probs = self.attn_dropout(attention_probs)
+        context_layer = torch.matmul(attention_probs, value_layer)
+        context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
+        new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
+        context_layer = context_layer.view(*new_context_layer_shape)
+        hidden_states = self.dense(context_layer)
+        hidden_states = self.out_dropout(hidden_states)
+        hidden_states = self.LayerNorm(hidden_states + input_tensor)
+        # print('self.dense.weight.grad',self.dense.weight.grad)
+        # print(self.dense.weight)
+
+        return hidden_states
 class ContextSeqEmbAbstractLayer(nn.Module):
     """For Deep Interest Network and feature-rich sequential recommender systems, return features embedding matrices."""
 

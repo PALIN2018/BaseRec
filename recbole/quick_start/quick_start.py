@@ -71,7 +71,7 @@ def run_recbole(
     logger.info(dataset)
 
     # dataset splitting
-    train_data, valid_data, test_data = data_preparation(config, dataset)
+    train_data, valid_data, test_data, valid_pop_data, valid_unpop_data = data_preparation(config, dataset)
 
     # model loading and initialization
     init_seed(config["seed"] + config["local_rank"], config["reproducibility"])
@@ -87,7 +87,7 @@ def run_recbole(
 
     # model training
     best_valid_score, best_valid_result = trainer.fit(
-        train_data, valid_data, saved=saved, show_progress=config["show_progress"]
+        train_data, valid_data, saved=saved, show_progress=config["show_progress"], valid_pop_data=valid_pop_data, valid_unpop_data=valid_unpop_data, test_data=test_data
     )
 
     # model evaluation

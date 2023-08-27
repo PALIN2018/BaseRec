@@ -407,6 +407,9 @@ class Trainer(AbstractTrainer):
         saved=True,
         show_progress=False,
         callback_fn=None,
+        valid_pop_data=None,
+        valid_unpop_data=None,
+        test_data=None
     ):
         r"""Train the model based on the train data and the valid data.
 
@@ -462,6 +465,15 @@ class Trainer(AbstractTrainer):
                 valid_score, valid_result = self._valid_epoch(
                     valid_data, show_progress=show_progress
                 )
+                _, valid_pop_result = self._valid_epoch(
+                    valid_pop_data, show_progress=show_progress
+                )
+                _, valid_unpop_result = self._valid_epoch(
+                    valid_unpop_data, show_progress=show_progress
+                )
+                _, test_result = self._valid_epoch(
+                    test_data, show_progress=show_progress
+                )
 
                 (
                     self.best_valid_score,
@@ -494,6 +506,15 @@ class Trainer(AbstractTrainer):
                 self.wandblogger.log_metrics(
                     {**valid_result, "valid_step": valid_step}, head="valid"
                 )
+                self.wandblogger.log_metrics(
+                    {**valid_pop_result, "valid_step": valid_step}, head="valid/pop"
+                )
+                self.wandblogger.log_metrics(
+                    {**valid_unpop_result, "valid_step": valid_step}, head="valid/unpop"
+                )
+                self.wandblogger.log_metrics(
+                    {**test_result, "test_step": valid_step}, head="test"
+                )
 
                 if update_flag:
                     if saved:
@@ -512,7 +533,9 @@ class Trainer(AbstractTrainer):
                     break
 
                 valid_step += 1
-
+        saved_last_model_file = "{}-{}_last.pth".format(self.config["model"], get_local_time())
+        saved_last_model_file = os.path.join(self.checkpoint_dir, saved_last_model_file)
+        self._save_checkpoint(epoch_idx, verbose=verbose, saved_model_file=saved_last_model_file)
         self._add_hparam_to_tensorboard(self.best_valid_score)
         return self.best_valid_score, self.best_valid_result
 

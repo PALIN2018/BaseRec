@@ -14,6 +14,7 @@ save_dataloaders: False         # (bool) Whether or not save split dataloaders.
 dataloaders_save_path: ~        # (str) The path of saved dataloaders.
 log_wandb: False                # (bool) Whether or not to use Weights & Biases(W&B).
 wandb_project: 'recbole'        # (str) The project to conduct experiments in W&B.
+run_name: 'recbole'        # (str) The project to conduct experiments in W&B.
 shuffle: True                   # (bool) Whether or not to shuffle the training data before each epoch.
 
 # Training Settings
